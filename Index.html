@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบตรวจสอบการเข้าร่วมกิจกรรม</title>
+    <!-- Tailwind CSS สำหรับความสวยงาม -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse สำหรับอ่านไฟล์จาก Google Sheets -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Sarabun', sans-serif; }
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <!-- ส่วนหัวเว็บ -->
+        <header class="bg-white rounded-xl shadow-sm p-6 mb-8 text-center">
+            <h1 class="text-3xl font-bold text-blue-800 mb-2">สรุปการเข้าร่วมกิจกรรม</h1>
+            <p class="text-gray-500">ข้อมูลอัปเดตอัตโนมัติตาม Google Sheets ทันทีที่มีการแก้ไข</p>
+            
+            <div id="loading" class="mt-4 flex justify-center items-center space-x-2 text-blue-600">
+                <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6"></div>
+                <span>กำลังดึงข้อมูลจาก Google Sheets...</span>
+            </div>
+            
+            <div id="stats" class="hidden mt-6 flex justify-center">
+                <!-- สถิติจะแสดงตรงนี้ -->
+            </div>
+        </header>
+
+        <div class="flex flex-col md:flex-row gap-6">
+            <!-- เมนูรายชื่อกิจกรรมด้านซ้าย -->
+            <div class="w-full md:w-1/3 flex flex-col gap-3" id="activity-list">
+                <!-- กิจกรรมต่างๆ จะถูกสร้างที่นี่อัตโนมัติ -->
+            </div>
+
+            <!-- หน้าจอแสดงผลรายชื่อคนเข้ากิจกรรมด้านขวา -->
+            <div class="w-full md:w-2/3">
+                <div class="bg-white rounded-xl shadow-sm p-6 sticky top-8 min-h-[400px]">
+                    <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-400 min-h-[300px]">
+                        <svg class="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                        <p class="text-lg">คลิกเลือกกิจกรรมทางซ้ายเพื่อดูรายชื่อผู้เข้าร่วม</p>
+                    </div>
+
+                    <div id="participant-panel" class="hidden">
+                        <h2 id="selected-activity-title" class="text-2xl font-bold text-gray-800 mb-2">ชื่อกิจกรรม</h2>
+                        <div class="flex items-center justify-between mb-6 pb-4 border-b">
+                            <span class="text-gray-600">ยอดผู้เข้าร่วม: <span id="selected-activity-count" class="font-bold text-blue-600">0</span> คน</span>
+                        </div>
+                        
+                        <div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="sticky top-0 bg-gray-50 shadow-sm">
+                                    <tr class="text-gray-700">
+                                        <th class="py-3 px-4 border-b font-medium">ลำดับ</th>
+                                        <th class="py-3 px-4 border-b font-medium">รหัสนิสิต</th>
+                                        <th class="py-3 px-4 border-b font-medium">ชื่อ-สกุล</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="participant-tbody" class="text-gray-600">
+                                    <!-- รายชื่อจะขึ้นตรงนี้ -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ID ของ Google Sheets (เอามาจากลิ้งก์ที่คุณให้มา)
+        const SHEET_ID = '1I_Q_HkmTKGo8u_eMr2gNV8UWwYRZFeHd';
+        // ใช้ gviz ของ Google เพื่อดึงข้อมูลมาเป็นตารางอัตโนมัติ
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv`;
+
+        let activitiesData = [];
+
+        // 1. โหลดข้อมูลเมื่อเปิดหน้าเว็บ
+        function loadData() {
+            Papa.parse(CSV_URL, {
+                download: true,
+                header: false,
+                complete: function(results) {
+                    processData(results.data);
+                },
+                error: function(error) {
+                    console.error("Error loading CSV:", error);
+                    alert("ไม่สามารถดึงข้อมูลได้ โปรดเช็คว่าแชร์ชีตเป็น Anyone with the link แล้ว");
+                }
+            });
+        }
+
+        // 2. ประมวลผลตาราง (รองรับการเพิ่มคอลัมน์เรื่อยๆ)
+        function processData(data) {
+            if(data.length < 2) return;
+            
+            const headers = data[0];
+            const activities = [];
+            
+            // หาคอลัมน์กิจกรรม เริ่มตั้งแต่ F (index = 5) ไปจนสุดทาง
+            for(let i = 5; i < headers.length; i++) {
+                if(headers[i] && headers[i].trim() !== "") {
+                    activities.push({
+                        index: i,
+                        name: headers[i].trim(),
+                        participants: []
+                    });
+                }
+            }
+            
+            // วนลูปอ่านรายชื่อนิสิตทีละแถว
+            for(let r = 1; r < data.length; r++) {
+                const row = data[r];
+                if(!row[1] || row[1].trim() === "") continue; // ข้ามถ้าไม่มีรหัสนิสิต
+                
+                const studentId = row[1].trim();
+                const prefix = row[2] ? row[2].trim() : '';
+                const fname = row[3] ? row[3].trim() : '';
+                const lname = row[4] ? row[4].trim() : '';
+                const fullName = `${prefix}${fname} ${lname}`.trim();
+                
+                // เช็คว่าใครติ๊กถูกกิจกรรมไหนบ้าง
+                activities.forEach(activity => {
+                    const val = row[activity.index];
+                    // นับเมื่อมีข้อมูลในช่องนั้น และไม่ใช่คำว่า "ลาป่วย"
+                    if(val && val.trim() !== "" && !val.includes("ลาป่วย") && !val.includes("ลา")) {
+                        activity.participants.push({ id: studentId, name: fullName });
+                    }
+                });
+            }
+            
+            activitiesData = activities;
+            renderUI();
+        }
+
+        // 3. วาดหน้าตาเว็บ
+        function renderUI() {
+            document.getElementById('loading').classList.add('hidden');
+            
+            // แสดงยอดกิจกรรมรวม
+            const statsDiv = document.getElementById('stats');
+            statsDiv.classList.remove('hidden');
+            statsDiv.innerHTML = `
+                <div class="bg-blue-50 px-6 py-3 rounded-lg text-center">
+                    <p class="text-sm text-blue-600 font-medium">รวมกิจกรรมที่เปิดทั้งหมด</p>
+                    <p class="text-3xl font-bold text-blue-800">${activitiesData.length}</p>
+                </div>
+            `;
+
+            // วาดปุ่มเลือกกิจกรรมทางซ้าย
+            const listDiv = document.getElementById('activity-list');
+            listDiv.innerHTML = '';
+            
+            activitiesData.forEach((activity, idx) => {
+                const card = document.createElement('button');
+                card.className = "w-full text-left bg-white p-4 rounded-xl shadow-sm hover:shadow-md hover:border-blue-500 border-2 border-transparent transition-all flex justify-between items-center group";
+                card.onclick = () => showActivity(idx, card);
+                
+                card.innerHTML = `
+                    <span class="font-medium text-gray-700 group-hover:text-blue-600 pr-4">${activity.name}</span>
+                    <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">
+                        ${activity.participants.length} คน
+                    </span>
+                `;
+                listDiv.appendChild(card);
+            });
+        }
+
+        // 4. เมื่อคลิกที่กิจกรรม ให้แสดงรายชื่อฝั่งขวา
+        function showActivity(idx, clickedCard) {
+            const cards = document.getElementById('activity-list').children;
+            for(let card of cards) {
+                card.classList.remove('border-blue-500', 'bg-blue-50');
+            }
+            clickedCard.classList.add('border-blue-500', 'bg-blue-50');
+
+            const activity = activitiesData[idx];
+            
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('participant-panel').classList.remove('hidden');
+            
+            document.getElementById('selected-activity-title').innerText = activity.name;
+            document.getElementById('selected-activity-count').innerText = activity.participants.length;
+            
+            const tbody = document.getElementById('participant-tbody');
+            tbody.innerHTML = '';
+            
+            if(activity.participants.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" class="text-center py-6 text-gray-400">ยังไม่มีผู้เข้าร่วม</td></tr>`;
+                return;
+            }
+
+            // เพิ่มรายชื่อลงตาราง
+            activity.participants.forEach((p, i) => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b hover:bg-blue-50 transition-colors";
+                tr.innerHTML = `
+                    <td class="py-3 px-4">${i + 1}</td>
+                    <td class="py-3 px-4 font-mono text-sm">${p.id}</td>
+                    <td class="py-3 px-4">${p.name}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        window.onload = loadData;
+    </script>
+</body>
+</html>
